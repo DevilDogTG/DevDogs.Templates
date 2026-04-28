@@ -11,6 +11,15 @@ The Copilot CLI is an interactive tool, so recurring automation is achieved by w
 - `gh` CLI installed and authenticated (`gh auth login`)
 - `jq` installed (for JSON parsing in scripts)
 - Script path: `.agent-brains/team/scripts/triage-agent.sh` (must be made executable before scheduling)
+- Required GitHub labels created on your repo (run once):
+  ```bash
+  gh label create "bug"          --repo OWNER/REPO --color "d73a4a"
+  gh label create "feature"      --repo OWNER/REPO --color "a2eeef"
+  gh label create "question"     --repo OWNER/REPO --color "d876e3"
+  gh label create "triage"       --repo OWNER/REPO --color "e4e669"
+  gh label create "needs-review" --repo OWNER/REPO --color "0e8a16"
+  gh label create "automation"   --repo OWNER/REPO --color "0075ca"
+  ```
 
 ---
 
