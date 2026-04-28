@@ -80,10 +80,10 @@ build_history_table() {
 # ---------------------------------------------------------------------------
 # Helper: update the GitHub status dashboard issue
 # ---------------------------------------------------------------------------
-# Args: $1=issues_triaged $2=prs_flagged $3=status_emoji
+# Args: $1=issues_triaged $2=prs_flagged $3=status_emoji $4=needs_review_list
 update_status_issue() {
     [[ -z "$STATUS_ISSUE" ]] && return
-    local issues="$1" prs="$2" status="$3"
+    local issues="$1" prs="$2" status="$3" nr_list="${4:-_None_}"
     local timestamp
     timestamp="$(date '+%Y-%m-%d %H:%M:%S %Z')"
 
@@ -101,11 +101,120 @@ update_status_issue() {
         -e "s/{{STATUS}}/${status}/g" \
         "$DASHBOARD_TPL")"
 
-    # Inject history table (multi-line sed workaround via awk)
+    # Inject multi-line blocks via awk
     body="$(echo "$body" | awk -v hist="$history_table" '{gsub(/\{\{HISTORY_TABLE\}\}/, hist); print}')"
+    body="$(echo "$body" | awk -v nr="$nr_list"         '{gsub(/\{\{NEEDS_REVIEW_LIST\}\}/, nr); print}')"
 
     gh issue edit "$STATUS_ISSUE" --repo "$REPO" --body "$body"
     log "Status dashboard updated → https://github.com/${REPO}/issues/${STATUS_ISSUE}"
+}
+
+# ---------------------------------------------------------------------------
+# Helper: post a summary comment on the dashboard issue when work was done
+# ---------------------------------------------------------------------------
+# Args: $1=issues_triaged $2=prs_flagged $3=nr_closed $4=done_closed
+post_dashboard_comment() {
+    [[ -z "$STATUS_ISSUE" ]] && return
+    local issues="$1" prs="$2" nr_closed="$3" done_closed="$4"
+
+    # Only comment when something meaningful happened
+    if [[ "$issues" -eq 0 && "$prs" -eq 0 && "$nr_closed" -eq 0 && "$done_closed" -eq 0 ]]; then
+        return
+    fi
+
+    local timestamp
+    timestamp="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+
+    local lines="### 🤖 Triage Run — ${timestamp}"$'\n\n'
+    [[ "$issues"    -gt 0 ]] && lines+="- 🏷 **${issues}** issue(s) triaged and labelled"$'\n'
+    [[ "$prs"       -gt 0 ]] && lines+="- 👀 **${prs}** PR(s) flagged for review"$'\n'
+    [[ "$nr_closed" -gt 0 ]] && lines+="- ⏰ **${nr_closed}** stale needs-review reminder(s) posted"$'\n'
+    [[ "$done_closed" -gt 0 ]] && lines+="- ✅ **${done_closed}** issue(s) auto-closed as done"$'\n'
+
+    gh issue comment "$STATUS_ISSUE" --repo "$REPO" --body "$lines"
+    log "Dashboard comment posted."
+}
+
+# ---------------------------------------------------------------------------
+# Helper: scan needs-review issues and remind if stale (>1 hour)
+# ---------------------------------------------------------------------------
+# Outputs the needs-review list markdown and increments nr_reminders counter
+scan_needs_review() {
+    log "Scanning 'needs-review' issues..."
+    local stale_threshold_secs=3600   # 1 hour
+    local now_secs
+    now_secs="$(date +%s)"
+
+    local nr_issues
+    nr_issues="$(gh issue list \
+        --repo "$REPO" \
+        --label "needs-review" \
+        --state open \
+        --json number,title,updatedAt \
+        --jq '.[]')"
+
+    local nr_list=""
+    nr_reminders=0
+
+    while IFS= read -r item; do
+        [[ -z "$item" ]] && continue
+        local number title updated_at updated_secs age_secs
+
+        number="$(echo "$item"     | jq -r '.number')"
+        title="$(echo "$item"      | jq -r '.title')"
+        updated_at="$(echo "$item" | jq -r '.updatedAt')"
+
+        updated_secs="$(date -d "$updated_at" +%s 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%SZ' "$updated_at" +%s 2>/dev/null || echo 0)"
+        age_secs=$(( now_secs - updated_secs ))
+
+        nr_list+="- #${number} — ${title}"$'\n'
+
+        if [[ "$updated_secs" -gt 0 && "$age_secs" -gt "$stale_threshold_secs" ]]; then
+            log "Issue #${number} (needs-review) stale for ${age_secs}s — posting reminder"
+            gh issue comment "$number" --repo "$REPO" \
+                --body "⏰ **Reminder:** This issue has been waiting for review for more than 1 hour. Please take a look or re-assign."
+            (( nr_reminders++ ))
+        fi
+    done < <(echo "$nr_issues")
+
+    [[ -z "$nr_list" ]] && nr_list="_None_"
+
+    # Export so caller can use it
+    NR_LIST="$nr_list"
+}
+
+# ---------------------------------------------------------------------------
+# Helper: auto-close issues with 'done' label (open state)
+# ---------------------------------------------------------------------------
+close_done_issues() {
+    log "Checking for 'done'-labelled open issues..."
+    local done_issues
+    done_issues="$(gh issue list \
+        --repo "$REPO" \
+        --label "done" \
+        --state open \
+        --json number,title \
+        --jq '.[]')"
+
+    done_closed=0
+
+    while IFS= read -r item; do
+        [[ -z "$item" ]] && continue
+        local number title
+        number="$(echo "$item" | jq -r '.number')"
+        title="$(echo "$item"  | jq -r '.title')"
+
+        # Skip the status dashboard issue
+        [[ "$number" == "$STATUS_ISSUE" ]] && continue
+
+        log "Auto-closing issue #${number}: \"${title}\" (labelled 'done')"
+
+        gh issue comment "$number" --repo "$REPO" \
+            --body "✅ **Closed automatically** by the triage agent because the \`done\` label was applied."$'\n\n'"_If this was premature, reopen the issue and remove the \`done\` label._"
+
+        gh issue close "$number" --repo "$REPO"
+        (( done_closed++ ))
+    done < <(echo "$done_issues")
 }
 
 # ---------------------------------------------------------------------------
@@ -226,13 +335,31 @@ if [[ "$pr_count" -gt 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Needs-Review Scanner
+# ---------------------------------------------------------------------------
+NR_LIST="_None_"
+nr_reminders=0
+scan_needs_review
+
+# ---------------------------------------------------------------------------
+# Auto-close Done Issues
+# ---------------------------------------------------------------------------
+done_closed=0
+close_done_issues
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 log "========================================"
 log "Triage complete."
-log "  Issues triaged : $issues_triaged"
-log "  PRs flagged    : $prs_flagged"
+log "  Issues triaged   : $issues_triaged"
+log "  PRs flagged      : $prs_flagged"
+log "  NR reminders     : $nr_reminders"
+log "  Done auto-closed : $done_closed"
 log "========================================"
 
 # Update the GitHub status dashboard issue in-place
-update_status_issue "$issues_triaged" "$prs_flagged" "✅ Completed"
+update_status_issue "$issues_triaged" "$prs_flagged" "✅ Completed" "$NR_LIST"
+
+# Post a summary comment on the dashboard when something happened
+post_dashboard_comment "$issues_triaged" "$prs_flagged" "$nr_reminders" "$done_closed"

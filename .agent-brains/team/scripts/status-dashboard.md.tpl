@@ -18,6 +18,10 @@
 
 {{HISTORY_TABLE}}
 
+## 🔍 Needs Review
+
+{{NEEDS_REVIEW_LIST}}
+
 ---
 
 _Updated by `triage-agent.sh` · [View logs](`~/.copilot/logs/triage-agent.log`)_
