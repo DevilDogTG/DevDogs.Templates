@@ -20,6 +20,7 @@ REPO="DevilDogTG/DevDogs.Templates"
 LOG_DIR="$HOME/.copilot/logs"
 LOG_FILE="$LOG_DIR/triage-agent.log"
 HISTORY_FILE="$LOG_DIR/triage-agent-history.tsv"
+REMINDED_FILE="$LOG_DIR/triage-reminded.tsv"   # tracks last reminder per issue
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE="$SCRIPT_DIR/triage-report.md.tpl"
 DASHBOARD_TPL="$SCRIPT_DIR/status-dashboard.md.tpl"
@@ -35,6 +36,15 @@ mkdir -p "$LOG_DIR"
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
 }
+
+# Self-load GH_TOKEN from pat_token file if not already set (for cron use)
+if [[ -z "${GH_TOKEN:-}" ]]; then
+    _PAT_FILE="$HOME/.config/gh/pat_token"
+    if [[ -f "$_PAT_FILE" ]]; then
+        GH_TOKEN="$(cat "$_PAT_FILE")"
+        export GH_TOKEN
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Dependency checks
@@ -136,45 +146,53 @@ post_dashboard_comment() {
 }
 
 # ---------------------------------------------------------------------------
-# Helper: scan needs-review issues and remind if stale (>1 hour)
+# Helper: scan needs-review issues and remind if stale (>1 hour since last reminder)
 # ---------------------------------------------------------------------------
-# Outputs the needs-review list markdown and increments nr_reminders counter
+# Uses ~/.copilot/logs/triage-reminded.tsv to track last reminder per issue,
+# so posting a reminder doesn't reset the updatedAt clock.
 scan_needs_review() {
     log "Scanning 'needs-review' issues..."
-    local stale_threshold_secs=3600   # 1 hour
+    local stale_threshold_secs=3600   # 1 hour between reminders
     local now_secs
     now_secs="$(date +%s)"
+
+    touch "$REMINDED_FILE"   # ensure file exists
 
     local nr_list=""
     nr_reminders=0
 
     while IFS= read -r item; do
         [[ -z "$item" ]] && continue
-        local number title updated_at updated_secs age_secs
+        local number title last_reminded_secs age_since_reminder
 
-        number="$(echo "$item"     | jq -r '.number')"
-        title="$(echo "$item"      | jq -r '.title')"
-        updated_at="$(echo "$item" | jq -r '.updatedAt')"
+        number="$(echo "$item" | jq -r '.number')"
+        title="$(echo "$item"  | jq -r '.title')"
 
         # Skip the status dashboard issue
         [[ "$number" == "$STATUS_ISSUE" ]] && continue
 
-        updated_secs="$(date -d "$updated_at" +%s 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%SZ' "$updated_at" +%s 2>/dev/null || echo 0)"
-        age_secs=$(( now_secs - updated_secs ))
-
         nr_list+="- #${number} — ${title}"$'\n'
 
-        if [[ "$updated_secs" -gt 0 && "$age_secs" -gt "$stale_threshold_secs" ]]; then
-            log "Issue #${number} (needs-review) stale for ${age_secs}s — posting reminder"
+        # Check last reminder time from local tracking file (not updatedAt)
+        last_reminded_secs="$(awk -F'\t' -v n="$number" '$1==n {print $2}' "$REMINDED_FILE" | tail -1)"
+        last_reminded_secs="${last_reminded_secs:-0}"
+        age_since_reminder=$(( now_secs - last_reminded_secs ))
+
+        if [[ "$age_since_reminder" -gt "$stale_threshold_secs" ]]; then
+            log "Issue #${number} (needs-review) — no reminder for ${age_since_reminder}s, posting"
             gh issue comment "$number" --repo "$REPO" \
                 --body "⏰ **Reminder:** This issue has been waiting for review for more than 1 hour. Please take a look or re-assign."
-            (( nr_reminders++ ))
+            # Record reminder timestamp
+            echo -e "${number}\t${now_secs}" >> "$REMINDED_FILE"
+            nr_reminders=$(( nr_reminders + 1 ))
+        else
+            log "Issue #${number} (needs-review) — reminded ${age_since_reminder}s ago, skipping"
         fi
     done < <(gh issue list \
         --repo "$REPO" \
         --label "needs-review" \
         --state open \
-        --json number,title,updatedAt \
+        --json number,title \
         | jq -c '.[]')
 
     [[ -z "$nr_list" ]] && nr_list="_None_"
@@ -205,7 +223,7 @@ close_done_issues() {
             --body "✅ **Closed automatically** by the triage agent because the \`done\` label was applied."$'\n\n'"_If this was premature, reopen the issue and remove the \`done\` label._"
 
         gh issue close "$number" --repo "$REPO"
-        (( done_closed++ ))
+        done_closed=$(( done_closed + 1 ))
     done < <(gh issue list \
         --repo "$REPO" \
         --label "done" \
@@ -291,7 +309,7 @@ if [[ "$issue_count" -gt 0 ]]; then
         # Post the structured triage comment
         post_triage_comment "$number" "$label"
 
-        (( issues_triaged++ ))
+        issues_triaged=$(( issues_triaged + 1 ))
     done < <(echo "$unlabeled_issues" | jq -c '.[]')
 fi
 
@@ -327,7 +345,7 @@ if [[ "$pr_count" -gt 0 ]]; then
         gh pr comment "$number" --repo "$REPO" \
             --body "👀 This PR has been flagged for review by the triage agent."
 
-        (( prs_flagged++ ))
+        prs_flagged=$(( prs_flagged + 1 ))
     done < <(echo "$unlabeled_prs" | jq -c '.[]')
 fi
 
