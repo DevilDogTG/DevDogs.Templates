@@ -145,14 +145,6 @@ scan_needs_review() {
     local now_secs
     now_secs="$(date +%s)"
 
-    local nr_issues
-    nr_issues="$(gh issue list \
-        --repo "$REPO" \
-        --label "needs-review" \
-        --state open \
-        --json number,title,updatedAt \
-        --jq '.[]')"
-
     local nr_list=""
     nr_reminders=0
 
@@ -163,6 +155,9 @@ scan_needs_review() {
         number="$(echo "$item"     | jq -r '.number')"
         title="$(echo "$item"      | jq -r '.title')"
         updated_at="$(echo "$item" | jq -r '.updatedAt')"
+
+        # Skip the status dashboard issue
+        [[ "$number" == "$STATUS_ISSUE" ]] && continue
 
         updated_secs="$(date -d "$updated_at" +%s 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%SZ' "$updated_at" +%s 2>/dev/null || echo 0)"
         age_secs=$(( now_secs - updated_secs ))
@@ -175,7 +170,12 @@ scan_needs_review() {
                 --body "⏰ **Reminder:** This issue has been waiting for review for more than 1 hour. Please take a look or re-assign."
             (( nr_reminders++ ))
         fi
-    done < <(echo "$nr_issues")
+    done < <(gh issue list \
+        --repo "$REPO" \
+        --label "needs-review" \
+        --state open \
+        --json number,title,updatedAt \
+        | jq -c '.[]')
 
     [[ -z "$nr_list" ]] && nr_list="_None_"
 
@@ -188,14 +188,6 @@ scan_needs_review() {
 # ---------------------------------------------------------------------------
 close_done_issues() {
     log "Checking for 'done'-labelled open issues..."
-    local done_issues
-    done_issues="$(gh issue list \
-        --repo "$REPO" \
-        --label "done" \
-        --state open \
-        --json number,title \
-        --jq '.[]')"
-
     done_closed=0
 
     while IFS= read -r item; do
@@ -214,7 +206,12 @@ close_done_issues() {
 
         gh issue close "$number" --repo "$REPO"
         (( done_closed++ ))
-    done < <(echo "$done_issues")
+    done < <(gh issue list \
+        --repo "$REPO" \
+        --label "done" \
+        --state open \
+        --json number,title \
+        | jq -c '.[]')
 }
 
 # ---------------------------------------------------------------------------
