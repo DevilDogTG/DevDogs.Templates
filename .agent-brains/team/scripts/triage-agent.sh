@@ -19,8 +19,12 @@ set -euo pipefail
 REPO="DevilDogTG/DevDogs.Templates"
 LOG_DIR="$HOME/.copilot/logs"
 LOG_FILE="$LOG_DIR/triage-agent.log"
+HISTORY_FILE="$LOG_DIR/triage-agent-history.tsv"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE="$SCRIPT_DIR/triage-report.md.tpl"
+DASHBOARD_TPL="$SCRIPT_DIR/status-dashboard.md.tpl"
+STATUS_ISSUE_FILE="$SCRIPT_DIR/triage-status-issue"
+STATUS_ISSUE=""
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -49,6 +53,60 @@ if [[ ! -f "$TEMPLATE" ]]; then
     log "ERROR: Comment template not found at: $TEMPLATE"
     exit 1
 fi
+
+# Load status issue number (optional — skip dashboard update if not configured)
+if [[ -f "$STATUS_ISSUE_FILE" ]]; then
+    STATUS_ISSUE="$(cat "$STATUS_ISSUE_FILE" | tr -d '[:space:]')"
+    log "Status dashboard issue: #${STATUS_ISSUE}"
+else
+    log "WARN: triage-status-issue config not found — dashboard update skipped."
+fi
+
+# ---------------------------------------------------------------------------
+# Helper: build recent history table from TSV log
+# ---------------------------------------------------------------------------
+build_history_table() {
+    if [[ ! -f "$HISTORY_FILE" ]] || [[ ! -s "$HISTORY_FILE" ]]; then
+        echo "_No history yet._"
+        return
+    fi
+    echo "| Run time | Issues triaged | PRs flagged | Status |"
+    echo "|---|---|---|---|"
+    tail -5 "$HISTORY_FILE" | while IFS=$'\t' read -r ts issues prs status; do
+        echo "| $ts | $issues | $prs | $status |"
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Helper: update the GitHub status dashboard issue
+# ---------------------------------------------------------------------------
+# Args: $1=issues_triaged $2=prs_flagged $3=status_emoji
+update_status_issue() {
+    [[ -z "$STATUS_ISSUE" ]] && return
+    local issues="$1" prs="$2" status="$3"
+    local timestamp
+    timestamp="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+
+    # Append to local history TSV
+    echo -e "${timestamp}\t${issues}\t${prs}\t${status}" >> "$HISTORY_FILE"
+
+    local history_table
+    history_table="$(build_history_table)"
+
+    local body
+    body="$(sed \
+        -e "s/{{TIMESTAMP}}/${timestamp}/g" \
+        -e "s/{{ISSUES_TRIAGED}}/${issues}/g" \
+        -e "s/{{PRS_FLAGGED}}/${prs}/g" \
+        -e "s/{{STATUS}}/${status}/g" \
+        "$DASHBOARD_TPL")"
+
+    # Inject history table (multi-line sed workaround via awk)
+    body="$(echo "$body" | awk -v hist="$history_table" '{gsub(/\{\{HISTORY_TABLE\}\}/, hist); print}')"
+
+    gh issue edit "$STATUS_ISSUE" --repo "$REPO" --body "$body"
+    log "Status dashboard updated → https://github.com/${REPO}/issues/${STATUS_ISSUE}"
+}
 
 # ---------------------------------------------------------------------------
 # Helper: render and post a triage comment from the template
@@ -114,6 +172,9 @@ if [[ "$issue_count" -gt 0 ]]; then
         number="$(echo "$issue" | jq -r '.number')"
         title="$(echo "$issue"  | jq -r '.title')"
 
+        # Skip the status dashboard issue itself
+        [[ "$number" == "$STATUS_ISSUE" ]] && continue
+
         label="$(classify_title "$title")"
 
         log "Issue #${number}: \"${title}\" → applying label '${label}'"
@@ -172,3 +233,6 @@ log "Triage complete."
 log "  Issues triaged : $issues_triaged"
 log "  PRs flagged    : $prs_flagged"
 log "========================================"
+
+# Update the GitHub status dashboard issue in-place
+update_status_issue "$issues_triaged" "$prs_flagged" "✅ Completed"
