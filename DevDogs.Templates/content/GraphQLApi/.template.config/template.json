@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "DevDogs",
+  "classifications": ["Web", "API", "GraphQL"],
+  "identity": "DevDogs.GraphQLApi",
+  "name": "DevDogs GraphQL API",
+  "shortName": "devdogs-graphql",
+  "tags": { "language": "C#", "type": "project" },
+  "sourceName": "GraphQLApi",
+  "preferNameDirectory": true,
+  "primaryOutputs": [
+    { "path": "GraphQLApi.csproj" }
+  ]
+}

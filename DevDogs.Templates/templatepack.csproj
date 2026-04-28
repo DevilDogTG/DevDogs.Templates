@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>DevDogs.Templates</PackageId>
+    <PackageVersion>1.0.0</PackageVersion>
+    <Title>DevDogs Templates</Title>
+    <Authors>DevDogs</Authors>
+    <Description>Personal project and item templates for dotnet new</Description>
+    <TargetFramework>net9.0</TargetFramework>
+    <PackageType>Template</PackageType>
+    <IncludeContentInPack>true</IncludeContentInPack>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <ContentTargetFolders>content</ContentTargetFolders>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="content\**\*" Exclude="content\**\bin\**;content\**\obj\**" />
+  </ItemGroup>
+</Project>

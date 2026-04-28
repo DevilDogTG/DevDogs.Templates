@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "DevDogs",
+  "classifications": ["Web", "API"],
+  "identity": "DevDogs.WebApi",
+  "name": "DevDogs Web API",
+  "shortName": "devdogs-webapi",
+  "tags": { "language": "C#", "type": "project" },
+  "sourceName": "WebApi",
+  "preferNameDirectory": true,
+  "primaryOutputs": [
+    { "path": "WebApi.csproj" }
+  ]
+}

@@ -1,0 +1,13 @@
+# Build output
+**/bin/
+**/obj/
+**/nupkg/
+
+# VS/Rider
+.vs/
+.idea/
+*.user
+
+# Logs
+logs/
+*.log

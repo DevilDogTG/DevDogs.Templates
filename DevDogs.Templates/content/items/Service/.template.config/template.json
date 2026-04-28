@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "DevDogs",
+  "classifications": ["Item"],
+  "identity": "DevDogs.Item.Service",
+  "name": "DevDogs Service",
+  "shortName": "devdogs-service",
+  "tags": { "language": "C#", "type": "item" },
+  "sourceName": "Service",
+  "primaryOutputs": [
+    { "path": "IService.cs" },
+    { "path": "Service.cs" }
+  ]
+}

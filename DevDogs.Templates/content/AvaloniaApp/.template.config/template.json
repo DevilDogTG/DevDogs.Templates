@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "DevDogs",
+  "classifications": ["Desktop", "Avalonia", "MVVM"],
+  "identity": "DevDogs.AvaloniaApp",
+  "name": "DevDogs Avalonia App",
+  "shortName": "devdogs-avalonia",
+  "tags": { "language": "C#", "type": "project" },
+  "sourceName": "AvaloniaApp",
+  "preferNameDirectory": true,
+  "primaryOutputs": [
+    { "path": "AvaloniaApp.csproj" }
+  ]
+}
